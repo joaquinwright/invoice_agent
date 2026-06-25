@@ -1,0 +1,25 @@
+# Secrets — never commit
+.env
+
+# Python virtual environment (uv manages .venv/ automatically; never commit it)
+.venv/
+venv/
+
+# Note: pyproject.toml, uv.lock, and .python-version ARE committed (reproducibility).
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Database files
+*.db
+
+# Dataset cache (can be large)
+data/
+.cache/
+
+# OS noise
+.DS_Store
+
+CLAUDE.md
