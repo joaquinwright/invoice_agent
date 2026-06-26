@@ -1,15 +1,13 @@
 """
-Turn Claude's raw text reply into a validated Receipt — or fail loudly but safely.
+Turn Claude's raw text reply into a validated Receipt — or fail safely.
 
-This is the VALIDATION half of the project (CLAUDE.md §1, §2.7): a runtime check that
-the model's output is *well-formed* (valid JSON, right fields, right types). It does
-NOT check that the values are *correct* — a wrong-but-well-formed price still passes
-here. Correctness is the eval's job (Phase 6).
+This is the validation step: a runtime check that the output is well-formed (valid
+JSON, right fields, right types). It does NOT check that the values are correct —
+that's the eval's job.
 
-Phase 4.1: `parse_receipt` cleans and parses one raw reply into a Receipt, raising a
-clear error when the text isn't well-formed.
-Phase 4.2: `extract_and_validate` re-prompts up to N times on failure and logs instead
-of crashing, so one bad document never takes down a whole run.
+parse_receipt cleans and parses one raw reply into a Receipt, raising on bad input.
+extract_and_validate re-prompts up to N times on failure and logs instead of
+crashing, so one bad document never takes down a run.
 """
 
 import logging
@@ -19,17 +17,15 @@ from pydantic import ValidationError
 
 from src.schema import Receipt
 
-# Module logger. Whoever runs the pipeline decides where these messages go (console,
-# file, ...) by configuring logging; this file just emits them.
+# Module logger. Whoever runs the pipeline decides where these messages go.
 logger = logging.getLogger(__name__)
 
 
 def _strip_code_fences(text: str) -> str:
     """Remove a leading ```/```json fence and trailing ``` from a model reply.
 
-    Claude often wraps JSON in a markdown code block (we saw this in Phase 3). Those
-    backticks are not valid JSON, so `json.loads` / Pydantic would choke on them. We
-    peel them off here. If there's no fence, the text is returned unchanged.
+    Claude often wraps JSON in a markdown code block; those backticks aren't valid
+    JSON, so we peel them off. Text without a fence is returned unchanged.
     """
     stripped = text.strip()
     if stripped.startswith("```"):
@@ -45,9 +41,9 @@ def _strip_code_fences(text: str) -> str:
 def parse_receipt(raw: str) -> Receipt:
     """Parse one raw model reply into a validated Receipt.
 
-    Raises pydantic.ValidationError if the cleaned text isn't well-formed JSON that
-    matches the Receipt schema. Callers (the retry loop) catch that to decide whether
-    to re-prompt.
+    Raises pydantic.ValidationError if the cleaned text isn't well-formed JSON
+    matching the Receipt schema. The retry loop catches that to decide whether to
+    re-prompt.
     """
     cleaned = _strip_code_fences(raw)
     return Receipt.model_validate_json(cleaned)
@@ -61,13 +57,13 @@ def extract_and_validate(
 ) -> Receipt | None:
     """Get a raw reply, validate it, and re-prompt on failure up to `max_retries` times.
 
-    `extractor` is a zero-argument function that returns one raw model reply. We accept
-    it as an argument (dependency injection) rather than calling the LLM directly so the
-    retry logic is testable with a fake extractor — no API calls, no tokens. In the real
-    pipeline the caller passes e.g. `lambda: extract_receipt(doc.image)`.
+    `extractor` is a zero-argument function that returns one raw model reply. Passing
+    it in (instead of calling the LLM directly) lets us test the retry logic with a
+    fake extractor — no API calls, no tokens. The real pipeline passes
+    `lambda: extract_receipt(doc.image)`.
 
-    Returns a validated Receipt, or None if every attempt failed (the failure is logged,
-    not raised — a single bad document must never crash the run, CLAUDE.md §2.7).
+    Returns a validated Receipt, or None if every attempt failed. A failure is
+    logged, not raised, so one bad document never crashes the run.
     """
     attempts = max_retries + 1  # one initial try plus `max_retries` re-prompts
     for attempt in range(1, attempts + 1):

@@ -1,21 +1,16 @@
 """
 The LLM extraction component: a receipt image -> structured fields (as text).
 
-This is the ONLY file in the project that talks to the LLM (CLAUDE.md §2.6, §2.9).
-Keeping all Claude calls here means the "smart but unreliable" part of the system
-is one small, replaceable box; everything around it stays boring and deterministic.
+This is the only file that talks to the LLM. Keeping all Claude calls here means
+the unreliable part of the system is one small, replaceable box.
 
-WHAT THIS DOES (Phase 3): send the receipt photo to Claude and ask it to return our
-fields as JSON. We return Claude's RAW TEXT reply, unparsed and unvalidated, on
-purpose. Phase 3 is where we feel the "the model returns slightly-off JSON" problem
-firsthand (CLAUDE.md Phase 3.3); Phase 4 adds the Pydantic parsing + bounded retries
-that tame it. The SDK can also *force* schema-valid output via structured outputs
-(`client.messages.parse(...)`) — the production-grade approach — but adopting it now
-would skip that lesson, so we hold it for a later improvement.
+It sends the receipt photo to Claude and returns the raw text reply, unparsed and
+unvalidated — parsing and retries happen in validate.py. (The SDK can also force
+schema-valid output via client.messages.parse(...); we keep the manual approach
+for now.)
 
-Auth: the ANTHROPIC_API_KEY is read from the gitignored .env file by python-dotenv;
-the Anthropic SDK then picks it up from the environment automatically. The key is
-never written in code (CLAUDE.md §2.3).
+Auth: ANTHROPIC_API_KEY is loaded from the gitignored .env by python-dotenv and
+picked up by the SDK automatically. The key never appears in code.
 """
 
 import base64
@@ -25,21 +20,18 @@ import anthropic
 from dotenv import load_dotenv
 from PIL import Image
 
-# Load .env into the process environment so the SDK finds ANTHROPIC_API_KEY.
+# Load .env so the SDK finds ANTHROPIC_API_KEY.
 load_dotenv()
 
-# Claude is vision-capable, so it reads the receipt photo directly (no OCR step).
-# We use Haiku — the cheapest current model (~$1/$5 per 1M input/output tokens, ~5x
-# cheaper than Opus) — deliberately, to stretch a small API budget on a learning-scale
-# project. The production default would be a stronger model like claude-opus-4-8; if
-# our eval later shows Haiku is the accuracy bottleneck, upgrading the model is one of
-# the improvements we can measure (CLAUDE.md Phase 8).
+# Claude reads the photo directly, so there's no separate OCR step. We use Haiku,
+# the cheapest current model, to stretch a small budget; a stronger model like
+# claude-opus-4-8 would be the production default and is an easy thing to try
+# later if accuracy needs it.
 _MODEL = "claude-haiku-4-5"
 
-# The instruction we send alongside the image. We describe the EXACT fields from our
-# locked schema (see src/schema.py) and demand JSON-only output — no prose — so the
-# reply is something we can later parse. Note: this is a request, not a guarantee;
-# that gap is exactly what Phase 4 handles.
+# The instruction sent with the image. It names the exact fields from our schema
+# (see src/schema.py) and demands JSON-only output. This is a request, not a
+# guarantee — validate.py handles the cases where the model doesn't comply.
 _SYSTEM_PROMPT = """You extract structured data from receipt images.
 
 Return ONLY a single JSON object — no prose, no markdown fences, no explanation —
@@ -63,8 +55,8 @@ _client = anthropic.Anthropic()
 def _image_to_base64_png(image: Image.Image) -> str:
     """Encode a PIL image as a base64 PNG string for the Anthropic image block.
 
-    The API takes image bytes as base64 text inside the request JSON, so we render
-    the in-memory PIL image to PNG bytes and base64-encode them.
+    The API takes image bytes as base64 text, so we render the image to PNG bytes
+    and base64-encode them.
     """
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
@@ -72,11 +64,10 @@ def _image_to_base64_png(image: Image.Image) -> str:
 
 
 def extract_receipt(image: Image.Image) -> str:
-    """Send one receipt image to Claude and return its RAW text reply (unparsed).
+    """Send one receipt image to Claude and return its raw text reply (unparsed).
 
-    The reply *should* be a JSON object matching our schema, but we deliberately do
-    not parse or validate it here — that is Phase 4's job. A caller in Phase 3 just
-    prints this to see what the model actually produces.
+    The reply should be JSON matching our schema, but we don't parse or validate it
+    here — that's validate.py's job.
     """
     image_b64 = _image_to_base64_png(image)
 
@@ -102,14 +93,14 @@ def extract_receipt(image: Image.Image) -> str:
         ],
     )
 
-    # response.content is a list of typed blocks; for a plain text reply we want the
-    # text of the first (and here, only) text block.
+    # response.content is a list of typed blocks; we want the text of the first
+    # text block.
     return next(block.text for block in response.content if block.type == "text")
 
 
 if __name__ == "__main__":
-    # Demo: extract ONE document and print Claude's raw output beside the ground truth.
-    # Hard-capped at a single document — every call costs tokens (CLAUDE.md §2.3).
+    # Demo: extract one document and print Claude's raw output beside the ground
+    # truth. Capped at a single document since every call costs tokens.
     import json
 
     from src.loader import load_cord

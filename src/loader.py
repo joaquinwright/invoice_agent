@@ -1,27 +1,20 @@
 """
-Load CORD receipts into a uniform shape the rest of the pipeline can consume.
+Load CORD receipts into a uniform shape the rest of the pipeline can use.
 
-WHY THIS FILE EXISTS (CLAUDE.md §2.6, §2.9): CORD's ground truth is nested,
-CORD-specific, and stringly-typed — e.g. line-item names live at
-`gt_parse.menu[i].nm`, the total at `gt_parse.total.total_price`, and prices are
-strings like "75,000" (comma = thousands separator). That mess must be
-quarantined HERE. Every other file (extract, validate, store, eval) should see
-only the clean uniform `Document` below and never touch a raw CORD field. If we
-ever swap datasets, this is the only file that changes.
+CORD's ground truth is nested and stringly-typed (line-item names live at
+gt_parse.menu[i].nm, prices are strings like "75,000"). All of that mess is
+handled here, so every other file sees only the clean Document below. Swap
+datasets and this is the only file that changes.
 
-The uniform shape is `Document(document_id, image, ground_truth)`:
-  * document_id  — a stable string id, e.g. "train-0", for logging/eval joins.
-  * image        — the receipt photo (a PIL image); this is the model's INPUT,
-                   because CORD-v2 is image-based (there is no plain-text field).
-  * ground_truth — the correct answer, flattened to OUR schema's field names
-                   (line_items / total / subtotal / tax) but with values kept as
-                   the RAW CORD strings. We deliberately do NOT clean them here:
-                   normalizing "75,000" -> 75000.0 is a scoring decision that
-                   belongs to the eval (Phase 6), not the loader.
+Document is (document_id, image, ground_truth):
+  * document_id  — stable id like "train-0", for logging and joins.
+  * image        — the receipt photo (CORD is image-based; this is the input).
+  * ground_truth — the correct answer mapped onto our field names, but with
+                   values left as raw CORD strings. We don't clean them here;
+                   normalizing "75,000" -> 75000.0 is the scoring step's job.
 
-NOTE: ground_truth here is a plain dict of raw strings, NOT a validated Receipt.
-Ground truth is reference data, not model output — it is the eval's job to
-normalize and compare it, not Pydantic's to validate it.
+ground_truth is a plain dict of raw strings, not a validated Receipt — it's
+reference data for the eval to normalize and compare, not model output.
 """
 
 import json
@@ -31,8 +24,7 @@ from typing import Any, Iterator
 from datasets import load_dataset
 from PIL import Image
 
-# Where the Hugging Face download is cached (see Phase 2.1). Committed data dir,
-# but the cache itself is gitignored.
+# Where the Hugging Face download is cached. The cache itself is gitignored.
 _CACHE_DIR = "data/hf_cache"
 _DATASET = "naver-clova-ix/cord-v2"
 
@@ -47,12 +39,11 @@ class Document:
 
 
 def _flatten_ground_truth(gt_parse: dict[str, Any]) -> dict[str, Any]:
-    """Map CORD's nested `gt_parse` onto OUR schema's field names.
+    """Map CORD's nested gt_parse onto our schema's field names.
 
-    Values are kept as raw CORD strings on purpose (see module docstring).
-    Defensive about CORD's quirks: `menu` is usually a list but can be a single
-    dict when a receipt has exactly one item, and optional sections may be
-    missing entirely.
+    Values stay as raw CORD strings on purpose. Handles CORD's quirks: `menu` is
+    usually a list but can be a single dict for one-item receipts, and optional
+    sections may be missing.
     """
     menu = gt_parse.get("menu", [])
     if isinstance(menu, dict):  # CORD collapses a single-item menu into a dict
@@ -84,9 +75,9 @@ def load_cord(split: str = "train", limit: int | None = None) -> Iterator[Docume
 
     Args:
         split: "train", "validation", or "test".
-        limit: stop after this many documents (None = all). During development
-            we always pass a small limit so we never iterate the whole dataset
-            (and, later, never spend tokens on it) by accident — CLAUDE.md §2.3.
+        limit: stop after this many documents (None = all). Always pass a small
+            limit during development so we never iterate the whole dataset by
+            accident.
     """
     dataset = load_dataset(_DATASET, split=split, cache_dir=_CACHE_DIR)
 
@@ -103,8 +94,7 @@ def load_cord(split: str = "train", limit: int | None = None) -> Iterator[Docume
 
 if __name__ == "__main__":
     # Demo: print one receipt's image info beside its flattened ground truth.
-    # CORD-v2 is image-based, so the "input" we show is the image's dimensions,
-    # not text (see module docstring).
+    # CORD is image-based, so the "input" shown is the image size, not text.
     for doc in load_cord(split="train", limit=1):
         print(f"document_id : {doc.document_id}")
         print(f"image       : {doc.image.size[0]}x{doc.image.size[1]} px, mode={doc.image.mode}")

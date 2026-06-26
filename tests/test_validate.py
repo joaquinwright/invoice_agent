@@ -1,8 +1,8 @@
 """
-Unit tests for src/validate.py (the parsing half, Phase 4.1).
+Unit tests for src/validate.py (parsing and the retry loop).
 
-Parsing is deterministic (CLAUDE.md §2.10): a given raw string either cleans+parses
-into a Receipt or raises. No LLM, no network — pure logic, classic unit tests.
+Parsing is deterministic: a given raw string either cleans and parses into a Receipt
+or raises. No LLM, no network — pure logic.
 
 Run with:  uv run pytest
 """
@@ -17,8 +17,8 @@ from src.validate import extract_and_validate, parse_receipt
 def make_extractor(replies):
     """Return a zero-arg extractor that yields `replies` in order, one per call.
 
-    This is the fake we inject in place of the real LLM call — it lets us drive the
-    retry loop deterministically with no API, no tokens.
+    This is the fake we inject in place of the real LLM call, so the retry loop runs
+    with no API and no tokens.
     """
     it = iter(replies)
     return lambda: next(it)
@@ -36,7 +36,7 @@ def test_plain_json_parses():
 
 
 def test_json_fenced_block_parses():
-    # The exact shape we saw Claude return in Phase 3: ```json ... ```
+    # JSON wrapped in a ```json fence, as Claude often returns.
     raw = f"```json\n{PLAIN_JSON}\n```"
     r = parse_receipt(raw)
     assert r.total == 8.5
@@ -67,13 +67,12 @@ def test_prose_only_raises():
 
 
 def test_wrong_type_raises():
-    # Well-formed JSON, but `total` is non-numeric text — fails schema validation,
-    # which is exactly the well-formedness guard we want.
+    # Well-formed JSON, but `total` is non-numeric text — fails schema validation.
     with pytest.raises(ValidationError):
         parse_receipt('{"total": "lots", "line_items": []}')
 
 
-# ---- the retry loop (Phase 4.2) -------------------------------------------
+# ---- the retry loop -------------------------------------------------------
 
 def test_succeeds_on_first_try():
     calls = []
