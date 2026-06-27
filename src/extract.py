@@ -52,14 +52,25 @@ Output the JSON object and nothing else."""
 _client = anthropic.Anthropic()
 
 
-def _image_to_base64_png(image: Image.Image) -> str:
-    """Encode a PIL image as a base64 PNG string for the Anthropic image block.
+# The API rejects images over 10 MB, and it internally downscales anything larger
+# than ~1568px on the long edge anyway — so a raw 15 MB phone photo is both too big
+# and wasteful. We cap the long edge and send JPEG (far smaller than PNG for photos).
+_MAX_EDGE = 1568
 
-    The API takes image bytes as base64 text, so we render the image to PNG bytes
-    and base64-encode them.
+
+def _image_to_base64_jpeg(image: Image.Image) -> str:
+    """Downscale if needed and encode a PIL image as a base64 JPEG for the API.
+
+    Resizes so the longest side is at most _MAX_EDGE (preserving aspect ratio), then
+    saves as JPEG — which keeps even large phone photos well under the API's 10 MB
+    limit. Converts to RGB first because JPEG can't hold transparency or palettes.
     """
+    image = image.convert("RGB")
+    if max(image.size) > _MAX_EDGE:
+        image.thumbnail((_MAX_EDGE, _MAX_EDGE))  # in-place, keeps aspect ratio
+
     buffer = io.BytesIO()
-    image.save(buffer, format="PNG")
+    image.save(buffer, format="JPEG", quality=85)
     return base64.standard_b64encode(buffer.getvalue()).decode("utf-8")
 
 
@@ -69,7 +80,7 @@ def extract_receipt(image: Image.Image) -> str:
     The reply should be JSON matching our schema, but we don't parse or validate it
     here — that's validate.py's job.
     """
-    image_b64 = _image_to_base64_png(image)
+    image_b64 = _image_to_base64_jpeg(image)
 
     response = _client.messages.create(
         model=_MODEL,
@@ -83,7 +94,7 @@ def extract_receipt(image: Image.Image) -> str:
                         "type": "image",
                         "source": {
                             "type": "base64",
-                            "media_type": "image/png",
+                            "media_type": "image/jpeg",
                             "data": image_b64,
                         },
                     },

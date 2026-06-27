@@ -33,32 +33,19 @@ logger = logging.getLogger(__name__)
 HARD_CAP = 25
 
 
-def run_pipeline(
-    *,
-    limit: int = 5,
-    split: str = "train",
-    db_path: str = DEFAULT_DB_PATH,
-    max_retries: int = 2,
-) -> dict[str, int]:
-    """Run the full pipeline over `limit` documents and store every result.
+def process_documents(documents, *, db_path: str = DEFAULT_DB_PATH, max_retries: int = 2) -> dict[str, int]:
+    """Extract, validate, and store every document in `documents`.
 
-    Returns a summary dict: {"ok": n, "failed": m, "total": n + m}. Each outcome is
-    also persisted to SQLite so the eval can read it back without re-calling the LLM.
-
-    Raises ValueError if `limit` exceeds HARD_CAP — the safety rail fires before any
-    document is loaded or any token is spent.
+    This is the source-agnostic core of the pipeline: it takes any iterable of
+    Documents (CORD, or a hand-labeled messy set) and runs the same loop. Returns a
+    summary dict: {"ok": n, "failed": m, "total": n + m}. Each outcome is persisted
+    to SQLite so the eval can read it back without re-calling the LLM.
     """
-    if limit > HARD_CAP:
-        raise ValueError(
-            f"limit={limit} exceeds HARD_CAP={HARD_CAP}. Refusing to run — "
-            "every document costs tokens. Raise HARD_CAP deliberately if you mean it."
-        )
-
     conn = connect(db_path)
     counts = {"ok": 0, "failed": 0}
 
     try:
-        for doc in load_cord(split=split, limit=limit):
+        for doc in documents:
             # Bind doc.image as a default arg so the extractor uses this document's
             # image. (It's called immediately, so it's safe either way, but binding
             # makes the intent explicit.)
@@ -81,6 +68,29 @@ def run_pipeline(
 
     counts["total"] = counts["ok"] + counts["failed"]
     return counts
+
+
+def run_pipeline(
+    *,
+    limit: int = 5,
+    split: str = "train",
+    db_path: str = DEFAULT_DB_PATH,
+    max_retries: int = 2,
+) -> dict[str, int]:
+    """Run the pipeline over `limit` CORD documents and store every result.
+
+    Raises ValueError if `limit` exceeds HARD_CAP — the safety rail fires before any
+    document is loaded or any token is spent.
+    """
+    if limit > HARD_CAP:
+        raise ValueError(
+            f"limit={limit} exceeds HARD_CAP={HARD_CAP}. Refusing to run — "
+            "every document costs tokens. Raise HARD_CAP deliberately if you mean it."
+        )
+
+    return process_documents(
+        load_cord(split=split, limit=limit), db_path=db_path, max_retries=max_retries
+    )
 
 
 if __name__ == "__main__":
